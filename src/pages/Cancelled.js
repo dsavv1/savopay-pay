@@ -31,18 +31,4 @@ export default function Cancelled() {
               <div style={{ fontWeight: 900, marginBottom: 16 }}>{paymentId}</div>
 
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <Link className="btn2" to={`/pay/${paymentId}`}>Try again</Link>
-                <Link className="btn2" to={`/`}>Back to POS</Link>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ marginBottom: 12 }}>No payment reference was provided.</div>
-              <Link className="btn2" to={`/`}>Back to POS</Link>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
+                <Link className="btn2" to
