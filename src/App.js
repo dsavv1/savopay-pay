@@ -15,4 +15,6 @@ export default function App() {
         <Route path="/cancelled/:paymentId" element={<Cancelled />} />
         <Route path="/success/:paymentId" element={<Success />} />
       </Routes>
-    </BrowserR
+    </BrowserRouter>
+  );
+}
