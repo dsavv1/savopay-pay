@@ -8,19 +8,35 @@ function fmt2(n) {
   return x.toFixed(2);
 }
 
+const NETWORKS = {
+  USDT: ["TRON", "ETH", "BSC"],
+  USDC: ["ETH", "BSC"],
+  BTC: ["BTC"],
+  ETH: ["ETH"]
+};
+
 export default function NewPayment() {
   const nav = useNavigate();
 
-  const [fiat, setFiat] = useState("USD"); // user-facing currency
-  const [amountFiat, setAmountFiat] = useState(""); // amount in selected fiat
+  const [fiat, setFiat] = useState("USD");
+  const [amountFiat, setAmountFiat] = useState("");
   const [crypto, setCrypto] = useState("USDT");
+  const [network, setNetwork] = useState("ETH");
 
-  const [rates, setRates] = useState(null); // { base:"USD", rates:{ NGN:..., GBP:... } }
+  const [rates, setRates] = useState(null);
   const [ratesErr, setRatesErr] = useState("");
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState("");
 
-  // Fetch USD FX rates (no backend change required)
+  useEffect(() => {
+    const opts = NETWORKS[crypto] || [];
+    const preferred =
+      opts.includes("TRON") ? "TRON" :
+      opts.includes("ETH") ? "ETH" :
+      opts[0] || "";
+    setNetwork(preferred);
+  }, [crypto]);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -46,7 +62,7 @@ export default function NewPayment() {
 
     if (fiat === "USD") return a;
 
-    const r = rates && rates.rates ? rates.rates[fiat] : null; // 1 USD = r FIAT
+    const r = rates && rates.rates ? rates.rates[fiat] : null;
     if (!r || !isFinite(r) || r <= 0) return null;
 
     return a / r;
@@ -81,7 +97,8 @@ export default function NewPayment() {
           currency: crypto,
           payer_id: "walk-in",
           meta_input_currency: fiat,
-          meta_input_amount: fmt2(a)
+          meta_input_amount: fmt2(a),
+          meta_network: network
         })
       });
 
@@ -96,6 +113,8 @@ export default function NewPayment() {
       setCreating(false);
     }
   }
+
+  const networkOpts = NETWORKS[crypto] || [];
 
   return (
     <div className="wrap">
@@ -151,14 +170,25 @@ export default function NewPayment() {
             <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>{usdDisplay}</div>
           </div>
 
-          <div style={{ marginTop: 14 }}>
-            <div className="muted" style={{ marginBottom: 6 }}>Crypto</div>
-            <select className="input" value={crypto} onChange={(e) => setCrypto(e.target.value)}>
-              <option value="USDT">USDT</option>
-              <option value="USDC">USDC</option>
-              <option value="BTC">BTC</option>
-              <option value="ETH">ETH</option>
-            </select>
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <div className="muted" style={{ marginBottom: 6 }}>Crypto</div>
+              <select className="input" value={crypto} onChange={(e) => setCrypto(e.target.value)}>
+                <option value="USDT">USDT</option>
+                <option value="USDC">USDC</option>
+                <option value="BTC">BTC</option>
+                <option value="ETH">ETH</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="muted" style={{ marginBottom: 6 }}>Network</div>
+              <select className="input" value={network} onChange={(e) => setNetwork(e.target.value)}>
+                {networkOpts.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {err ? (
@@ -169,11 +199,6 @@ export default function NewPayment() {
             <button className="btn2" onClick={createPayment} disabled={creating}>
               {creating ? "Creating…" : "Create payment"}
             </button>
-            <a className="btn2" href="/pay/demo">Demo / Help</a>
-          </div>
-
-          <div className="muted" style={{ marginTop: 12 }}>
-            Customer enters any supported fiat. We convert to USD for the API so ForumPay always receives USD invoices.
           </div>
         </div>
       </div>
