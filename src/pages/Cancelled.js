@@ -1,65 +1,48 @@
 import React from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 
 export default function Cancelled() {
-  const nav = useNavigate();
   const { paymentId: paymentIdParam } = useParams();
   const [searchParams] = useSearchParams();
 
   const paymentId = paymentIdParam || searchParams.get("payment_id") || "";
 
   return (
-    <div style={{ maxWidth: 720, margin: "40px auto", padding: 16 }}>
-      <h2>Payment cancelled</h2>
-      <p>The payment was cancelled or not completed.</p>
-
-      {paymentId ? (
-        <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <div>
-            <p style={{ marginBottom: 8 }}>
-              Payment ID: <b>{paymentId}</b>
-            </p>
-
-            <button
-              onClick={() => nav(`/pay/${paymentId}`)}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                cursor: "pointer"
-              }}
-            >
-              Try again
-            </button>
+    <div className="wrap">
+      <div className="card" style={{ maxWidth: 680, width: "100%" }}>
+        <div className="header">
+          <div className="brand">
+            <div className="logo" />
+            <div>
+              <div className="title">Payment cancelled</div>
+              <div className="sub">The payment was cancelled or not completed.</div>
+            </div>
           </div>
+          <div className="pill">
+            <span className="dot" />
+            <span>Cancelled</span>
+          </div>
+        </div>
 
-          <button
-            onClick={() => nav(`/`)}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              cursor: "pointer"
-            }}
-          >
-            Back to POS
-          </button>
+        <div className="content">
+          {paymentId ? (
+            <>
+              <div className="muted">Reference</div>
+              <div style={{ fontWeight: 900, marginBottom: 16 }}>{paymentId}</div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <Link className="btn2" to={`/pay/${paymentId}`}>Try again</Link>
+                <Link className="btn2" to={`/`}>Back to POS</Link>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: 12 }}>No payment reference was provided.</div>
+              <Link className="btn2" to={`/`}>Back to POS</Link>
+            </>
+          )}
         </div>
-      ) : (
-        <div style={{ marginTop: 16 }}>
-          <button
-            onClick={() => nav(`/`)}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid #ddd",
-              cursor: "pointer"
-            }}
-          >
-            Back to POS
-          </button>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
