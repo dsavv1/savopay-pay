@@ -4,3 +4,7 @@ build
 .env.*
 .DS_Store
 package.json.save
+node_modules
+.env
+build
+.DS_Store

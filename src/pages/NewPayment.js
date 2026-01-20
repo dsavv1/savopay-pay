@@ -1,204 +1,293 @@
+// src/pages/NewPayment.js
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { API_BASE } from "../api";
+import { useNavigate, useParams } from "react-router-dom";
 
-function fmt2(n) {
-  const x = Number(n);
-  if (!isFinite(x)) return "";
-  return x.toFixed(2);
-}
+const API_BASE =
+  (process.env.REACT_APP_API_BASE || "").trim() || "https://api.savopay.co";
 
-const NETWORKS = {
-  USDT: ["TRON", "ETH", "BSC"],
-  USDC: ["ETH", "BSC"],
-  BTC: ["BTC"],
-  ETH: ["ETH"]
+const SUPPORTED_FIAT = ["USD", "GBP", "EUR", "NGN"];
+
+// Locked for now (matches current backend default behavior)
+const SUPPORTED_ASSETS = [
+  { crypto: "USDT", networkLabel: "Ethereum (ERC-20)", networkKey: "ethereum" },
+];
+
+// Fallback rates: 1 USD = X fiat (approx). Used only if live FX fetch fails.
+const FALLBACK_USD_BASE_RATES = {
+  USD: 1,
+  GBP: 0.79,
+  EUR: 0.92,
+  NGN: 1500,
 };
 
+function isValidMoney(v) {
+  if (v === "" || v == null) return false;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0;
+}
+
+async function fetchUsdBaseRates(signal) {
+  const url = "https://open.er-api.com/v6/latest/USD";
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`FX fetch failed: ${res.status}`);
+  const data = await res.json();
+  if (!data || !data.rates) throw new Error("FX response missing rates");
+  return data.rates;
+}
+
 export default function NewPayment() {
-  const nav = useNavigate();
+  const navigate = useNavigate();
+  const { merchant } = useParams();
+  const [fiatCurrency, setFiatCurrency] = useState("USD");
+  const [fiatAmount, setFiatAmount] = useState("");
+  const [payerId, setPayerId] = useState("walk-in");
 
-  const [fiat, setFiat] = useState("USD");
-  const [amountFiat, setAmountFiat] = useState("");
-  const [crypto, setCrypto] = useState("USDT");
-  const [network, setNetwork] = useState("ETH");
+  const [assetKey, setAssetKey] = useState(
+    `${SUPPORTED_ASSETS[0].crypto}:${SUPPORTED_ASSETS[0].networkKey}`
+  );
 
-  const [rates, setRates] = useState(null);
-  const [ratesErr, setRatesErr] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [err, setErr] = useState("");
+  const selectedAsset = useMemo(() => {
+    const [crypto, networkKey] = String(assetKey).split(":");
+    return (
+      SUPPORTED_ASSETS.find(
+        (a) => a.crypto === crypto && a.networkKey === networkKey
+      ) || SUPPORTED_ASSETS[0]
+    );
+  }, [assetKey]);
+
+  const [usdBaseRates, setUsdBaseRates] = useState(FALLBACK_USD_BASE_RATES);
+  const [fxStatus, setFxStatus] = useState("idle"); // idle | loading | ok | fallback
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const opts = NETWORKS[crypto] || [];
-    const preferred =
-      opts.includes("TRON") ? "TRON" :
-      opts.includes("ETH") ? "ETH" :
-      opts[0] || "";
-    setNetwork(preferred);
-  }, [crypto]);
-
-  useEffect(() => {
-    let alive = true;
+    const ac = new AbortController();
     (async () => {
       try {
-        setRatesErr("");
-        const res = await fetch("https://open.er-api.com/v6/latest/USD");
-        const data = await res.json();
-        if (!alive) return;
-        if (!data || data.result !== "success" || !data.rates) throw new Error("fx_unavailable");
-        setRates({ base: "USD", rates: data.rates, time: data.time_last_update_utc });
-      } catch (e) {
-        if (!alive) return;
-        setRatesErr("FX rates unavailable (conversion to USD may not work).");
-        setRates(null);
+        setFxStatus("loading");
+        const liveRates = await fetchUsdBaseRates(ac.signal);
+        const merged = { ...FALLBACK_USD_BASE_RATES, ...liveRates };
+        for (const c of SUPPORTED_FIAT) {
+          if (!merged[c] || !Number.isFinite(Number(merged[c]))) {
+            throw new Error(`Missing FX rate for ${c}`);
+          }
+        }
+        setUsdBaseRates(merged);
+        setFxStatus("ok");
+      } catch {
+        setUsdBaseRates(FALLBACK_USD_BASE_RATES);
+        setFxStatus("fallback");
       }
     })();
-    return () => { alive = false; };
+    return () => ac.abort();
   }, []);
 
   const usdAmount = useMemo(() => {
-    const a = Number(amountFiat);
-    if (!isFinite(a) || a <= 0) return null;
+    if (!isValidMoney(fiatAmount)) return "";
+    const amt = Number(fiatAmount);
+    const rate = Number(usdBaseRates[fiatCurrency]);
+    if (!Number.isFinite(rate) || rate <= 0) return "";
+    const usd = fiatCurrency === "USD" ? amt : amt / rate;
+    return (Math.round(usd * 100) / 100).toFixed(2);
+  }, [fiatAmount, fiatCurrency, usdBaseRates]);
 
-    if (fiat === "USD") return a;
+  async function onSubmit(e) {
+    e.preventDefault();
+    setError("");
 
-    const r = rates && rates.rates ? rates.rates[fiat] : null;
-    if (!r || !isFinite(r) || r <= 0) return null;
+    if (!isValidMoney(fiatAmount)) return setError("Enter a valid amount.");
+    if (!usdAmount) return setError("Could not compute USD amount.");
 
-    return a / r;
-  }, [amountFiat, fiat, rates]);
-
-  const usdDisplay = usdAmount === null ? "-" : `$${fmt2(usdAmount)}`;
-
-  async function createPayment() {
-    setErr("");
-    const a = Number(amountFiat);
-
-    if (!isFinite(a) || a <= 0) {
-      setErr("Enter a valid amount.");
-      return;
-    }
-
-    if (fiat !== "USD" && usdAmount === null) {
-      setErr("Cannot convert to USD right now. Try again or switch to USD.");
-      return;
-    }
-
-    const invoiceUsd = fiat === "USD" ? a : usdAmount;
-
-    setCreating(true);
+    setSubmitting(true);
     try {
+      const payload = {
+        invoice_amount: usdAmount,
+        invoice_currency: "USD",
+        payer_id: (payerId || "walk-in").trim(),
+        ...(merchant ? { merchant } : {}),
+      };
+
       const res = await fetch(`${API_BASE}/start-payment`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invoice_amount: fmt2(invoiceUsd),
-          invoice_currency: "USD",
-          currency: crypto,
-          payer_id: "walk-in",
-          meta_input_currency: fiat,
-          meta_input_amount: fmt2(a),
-          meta_network: network
-        })
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      if (!res.ok) {
+        const msg =
+          (data && (data.error || data.message)) ||
+          `Start payment failed (${res.status})`;
+        throw new Error(msg);
+      }
 
-      if (!data.payment_id) throw new Error("missing_payment_id");
-      nav(`/pay/${data.payment_id}`);
-    } catch (e) {
-      setErr(String(e.message || e));
+      const paymentId = data.payment_id || data.id || data.paymentId;
+      if (!paymentId) throw new Error("Missing payment_id from backend.");
+
+      navigate(merchant ? `/m/${merchant}/pay/${paymentId}` : `/pay/${paymentId}`);
+    } catch (err) {
+      setError(err?.message || "Failed to start payment.");
     } finally {
-      setCreating(false);
+      setSubmitting(false);
     }
   }
 
-  const networkOpts = NETWORKS[crypto] || [];
-
   return (
     <div className="wrap">
-      <div className="card" style={{ maxWidth: 760, width: "100%" }}>
-        <div className="header">
-          <div className="brand">
-            <div className="logo" />
-            <div>
-              <div className="title">SavoPay POS</div>
-              <div className="sub">Create a payment request</div>
-            </div>
-          </div>
-          <div className="pill">
-            <span className="dot" />
-            <span>Live</span>
-          </div>
-        </div>
-
-        <div className="content">
-          <div className="muted" style={{ marginBottom: 10 }}>
-            API base: <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{API_BASE}</span>
-          </div>
-
-          {ratesErr ? (
-            <div className="muted" style={{ marginBottom: 10 }}>{ratesErr}</div>
-          ) : null}
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 160px", gap: 10 }}>
-            <div>
-              <div className="muted" style={{ marginBottom: 6 }}>Amount (in {fiat})</div>
-              <input
-                className="input"
-                inputMode="decimal"
-                placeholder={fiat === "NGN" ? "5000" : "1.00"}
-                value={amountFiat}
-                onChange={(e) => setAmountFiat(e.target.value)}
-              />
+      <div className="shell" style={{ gridTemplateColumns: "1fr" }}>
+        <div className="card">
+          <div className="header">
+            <div className="brand">
+              <div className="logo" />
+              <div>
+                <div className="title">SavoPay POS</div>
+                <div className="sub">Create a payment</div>
+              </div>
             </div>
 
-            <div>
-              <div className="muted" style={{ marginBottom: 6 }}>Fiat</div>
-              <select className="input" value={fiat} onChange={(e) => setFiat(e.target.value)}>
-                <option value="USD">USD</option>
-                <option value="GBP">GBP</option>
-                <option value="EUR">EUR</option>
-                <option value="NGN">NGN</option>
-              </select>
+            <div className="pill">
+              <span className="dot good" />
+              <span>Live</span>
             </div>
           </div>
 
-          <div style={{ marginTop: 10 }}>
-            <div className="muted">Converted (USD)</div>
-            <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>{usdDisplay}</div>
+          <div className="content">
+            <form onSubmit={onSubmit}>
+              <div className="grid2">
+                <div className="field">
+                  <div className="label">Amount</div>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={fiatAmount}
+                    onChange={(e) => setFiatAmount(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+
+                <div className="field">
+                  <div className="label">Currency</div>
+                  <select
+                    className="select"
+                    value={fiatCurrency}
+                    onChange={(e) => setFiatCurrency(e.target.value)}
+                  >
+                    {SUPPORTED_FIAT.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid2">
+                <div className="field">
+                  <div className="label">Crypto</div>
+                  <select
+                    className="select"
+                    value={assetKey}
+                    onChange={(e) => setAssetKey(e.target.value)}
+                    disabled={SUPPORTED_ASSETS.length <= 1}
+                  >
+                    {SUPPORTED_ASSETS.map((a) => (
+                      <option
+                        key={`${a.crypto}:${a.networkKey}`}
+                        value={`${a.crypto}:${a.networkKey}`}
+                      >
+                        {a.crypto}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="small" style={{ marginTop: 6 }}>
+                    {SUPPORTED_ASSETS.length <= 1
+                      ? "Locked to current backend default."
+                      : ""}
+                  </div>
+                </div>
+
+                <div className="field">
+                  <div className="label">Network</div>
+                  <input
+                    className="input"
+                    value={selectedAsset.networkLabel}
+                    readOnly
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <div className="label">Payer ID</div>
+                <input
+                  className="input"
+                  autoComplete="off"
+                  value={payerId}
+                  onChange={(e) => setPayerId(e.target.value)}
+                  placeholder="walk-in"
+                />
+              </div>
+
+              <div className="field">
+                <div className="label">USD (sent to /start-payment)</div>
+                <input
+                  className="input"
+                  value={usdAmount ? `$${usdAmount}` : ""}
+                  readOnly
+                />
+                <div className="small" style={{ marginTop: 6 }}>
+                  {fxStatus === "loading" && "Loading FX rates…"}
+                  {fxStatus === "ok" && "FX rates loaded."}
+                  {fxStatus === "fallback" &&
+                    "Using fallback FX rates (offline/unavailable)."}
+                </div>
+              </div>
+
+              <div className="hr" />
+
+              <div>
+                <div style={{ fontWeight: 900, marginBottom: 8 }}>
+                  Payment Summary
+                </div>
+                <div className="kv">
+                  <span className="muted">Fiat</span>
+                  <span>
+                    {isValidMoney(fiatAmount) ? fiatAmount : "—"} {fiatCurrency}
+                  </span>
+                </div>
+                <div className="kv">
+                  <span className="muted">USD to backend</span>
+                  <span>{usdAmount ? `$${usdAmount}` : "—"}</span>
+                </div>
+                <div className="kv">
+                  <span className="muted">Asset / Network</span>
+                  <span>
+                    {selectedAsset.crypto} • {selectedAsset.networkLabel}
+                  </span>
+                </div>
+                <div className="small" style={{ marginTop: 6 }}>
+                  Final crypto total + network fee is calculated after the
+                  payment is created (shown on the next screen).
+                </div>
+              </div>
+
+              {error ? (
+                <div style={{ marginTop: 12, color: "var(--bad)" }}>
+                  {error}
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 14 }}>
+                <button className="btn" type="submit" disabled={submitting}>
+                  {submitting ? "Creating…" : "Create Payment"}
+                </button>
+              </div>
+            </form>
           </div>
 
-          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <div className="muted" style={{ marginBottom: 6 }}>Crypto</div>
-              <select className="input" value={crypto} onChange={(e) => setCrypto(e.target.value)}>
-                <option value="USDT">USDT</option>
-                <option value="USDC">USDC</option>
-                <option value="BTC">BTC</option>
-                <option value="ETH">ETH</option>
-              </select>
-            </div>
-
-            <div>
-              <div className="muted" style={{ marginBottom: 6 }}>Network</div>
-              <select className="input" value={network} onChange={(e) => setNetwork(e.target.value)}>
-                {networkOpts.map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {err ? (
-            <div style={{ marginTop: 12 }} className="error">{err}</div>
-          ) : null}
-
-          <div style={{ marginTop: 16, display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="btn2" onClick={createPayment} disabled={creating}>
-              {creating ? "Creating…" : "Create payment"}
-            </button>
+          <div className="footer">
+            <span>API: {API_BASE}</span>
+            <span>POS: savopay-pay</span>
           </div>
         </div>
       </div>

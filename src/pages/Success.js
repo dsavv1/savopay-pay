@@ -2,7 +2,13 @@ import React from "react";
 import { Link, useParams } from "react-router-dom";
 
 export default function Success() {
-  const { paymentId } = useParams();
+  const { merchant, paymentId } = useParams();
+
+  const detailsHref = merchant
+    ? `/m/${merchant}/pay/${paymentId}`
+    : `/pay/${paymentId}`;
+
+  const backHref = merchant ? `/m/${merchant}` : `/`;
 
   return (
     <div className="wrap">
@@ -26,8 +32,12 @@ export default function Success() {
           <div style={{ fontWeight: 900, marginBottom: 16 }}>{paymentId}</div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Link className="btn2" to={`/pay/${paymentId}`}>View payment details</Link>
-            <Link className="btn2" to={`/`}>Back to POS</Link>
+            <Link className="btn2" to={detailsHref}>
+              View payment details
+            </Link>
+            <Link className="btn2" to={backHref}>
+              Back to POS
+            </Link>
           </div>
         </div>
       </div>
